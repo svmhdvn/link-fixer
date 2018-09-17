@@ -5,6 +5,13 @@
 #include <algorithm>
 #include <ctype.h>
 
+#define TRY_OR_RETURN(cmd) do { \
+    err = cmd;                  \
+    if (err) {                  \
+        return err;             \
+    }                           \
+} while (0);
+
 using namespace std;
 
 enum State {
@@ -19,12 +26,13 @@ enum State {
 
 // NOTE: moves file marker
 // expects to be right after the opening bracket, paren, or quote
-string handleTitle(ifstream &in, char closing) {
-    string title;
+// return 0 if no errors
+int handleTitle(ifstream &in, char closing, string &title) {
     char c;
-    while (in.get(c)) {
+    while (EOF != (c = in.get())) {
         if ('\n' == c) {
-            // TODO: error here due to malformed title
+            cerr << "Error: unfinished title tag in link definition" << endl;
+           return 1;
         } else if (c == closing) {
             break;
         } else {
@@ -32,75 +40,90 @@ string handleTitle(ifstream &in, char closing) {
         }
     }
 
-    return title;
+    if (EOF == c) {
+        cerr << "Error: reached EOF in the middle of a title tag" << endl;
+        return 1;
+    }
+    return 0;
 }
 
 // NOTE: moves file marker
-void handleLinkDef(ifstream &in, pair<string, string> &link) {
+int handleLinkDef(ifstream &in, pair<string, string> &link) {
     char c;
+    int err = 0;
     // ignore leading spaces before HREF
     do {
-        in.get(c);
-    } while (' ' == c || '\t' == c);
+        c = in.get();
+    } while (isblank(c));
+
+    if ('\n' == c) {
+        cerr << "Error: empty reference link definition" << endl;
+        return 1;
+    }
 
     // record HREF
     while (!isspace(c)) {
         link.first.push_back(c);
-        in.get(c);
+        c = in.get();
     }
 
     // skip over all spaces and newlines after HREF until next input (making sure to skip)
     char p;
     while (isspace(p = in.peek())) {
-        in.get(c);
+        c = in.get();
     }
 
     // handle title if there exists one
     if ('"' == p || '\'' == p) {
-        in.get(c);
-        link.second = handleTitle(in, c);
+        c = in.get();
+        TRY_OR_RETURN(handleTitle(in, p, link.second));
     } else if ('(' == p) {
-        in.get(c);
-        link.second = handleTitle(in, ')');
+        c = in.get();
+        TRY_OR_RETURN(handleTitle(in, ')', link.second));
     }
 
     // skip over ending spaces too so that we don't add extra newlines
-    while (isspace(p = in.peek())) {
-        in.get(c);
-    }
-
-    return;
+    while (isspace(in.peek()) && (EOF != in.get()));
+    return 0;
 }
 
-// NOTE: moves file marker
-// expects to be right after the opening paren
-void handleRef(ofstream &out, vector<string> &refs, string &ref) {
-    vector<string>::iterator it = find(refs.begin(), refs.end(), ref);
-    if (refs.end() == it) {
-        refs.push_back(ref);
-        out << '[' << refs.size() << ']';
-    } else {
-        out << '[' << distance(refs.begin(), it) + 1 << ']';
-    }
-}
-
-void handleParen(ifstream &in, pair<string, string> &link) {
+int handleParen(ifstream &in, pair<string, string> &link) {
     char c;
-    while (in.get(c) && !isblank(c) && ')' != c) {
+    int err = 0;
+    while ((EOF != (c = in.get())) && !isblank(c) && (')' != c)) {
         link.first.push_back(c);
     }
 
-    if (isblank(c)) {
-        if (in.get(c) && '"' != c) {
-            // TODO: error here, doesn't match implicit link title format
-            return;
-        }
-        link.second = handleTitle(in, '"');
+    if (in.eof()) {
+        cerr << "Error: reached EOF in the middle of an inline link" << endl;
+        return 1;
     }
 
-    if (in.get(c) && ')' != c) {
-        // TODO: error, no matching closing paren
-        return;
+    if (isblank(c)) {
+        if ((EOF != (c = in.get())) && ('"' != c)) {
+            cerr << "Error: extra spaces or wrong formatting in inline link definition" << endl;
+            return 1;
+        }
+
+        TRY_OR_RETURN(handleTitle(in, '"', link.second));
+
+        if (')' != in.get()) {
+            cerr << "Error: missing closing parenthesis in inline link definition" << endl;
+            return 1;
+        }
+    }
+
+    return err;
+}
+
+// expects to be right after the opening paren
+void handleRef(vector<string> &refs, string &ref) {
+    vector<string>::iterator it = find(refs.begin(), refs.end(), ref);
+    if (refs.end() == it) {
+        refs.push_back(ref);
+        cout << '[' << refs.size() << ']';
+    } else {
+        cout << '[' << distance(refs.begin(), it) + 1 << ']';
     }
 }
 
@@ -110,23 +133,23 @@ void clear(string &ref, pair<string, string> &link) {
     link.second.clear();
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     enum State cur = ST_CHAR;
     vector<string> refs;
     unordered_map< string, pair<string, string> > lookup;
-    ifstream in("test.md");
-    ofstream out("test-out.md");
+    ifstream in(argv[1]);
     char c;
+    int err;
 
     string ref;
     pair<string, string> link;
-    while (in.get(c)) {
+    while (EOF != (c = in.get())) {
         switch (cur) {
             case ST_CHAR:
                 if ('[' == c) {
                     cur = ST_OPEN1;
                 } else {
-                    out.put(c);
+                    cout.put(c);
                 }
                 break;
             case ST_OPEN1:
@@ -138,20 +161,20 @@ int main() {
                 break;
             case ST_CLOSE1:
                 if ('[' == c) {
-                    out << '[' << ref << ']';
+                    cout << '[' << ref << ']';
                     cur = ST_OPEN2;
                 } else if ('(' == c) {
-                    out << '[' << ref << ']';
+                    cout << '[' << ref << ']';
                     cur = ST_PAREN;
                 } else if (':' == c) {
-                    handleLinkDef(in, link);
+                    TRY_OR_RETURN(handleLinkDef(in, link));
                     lookup[ref] = link;
                     clear(ref, link);
                     cur = ST_CHAR;
-                } else if (isspace(c)) {
+                } else if (isblank(c)) {
                     cur = ST_CLOSE1SPACE;
                 } else {
-                    out << '[' << ref << ']';
+                    cout << '[' << ref << ']';
                     clear(ref, link);
                     cur = ST_CHAR;
                 }
@@ -162,15 +185,15 @@ int main() {
                 } else {
                     cur = ST_CHAR;
                 }
-                out << '[' << ref << ']';
+                cout << '[' << ref << ']';
                 break;
             case ST_PAREN:
                 if ('#' == c) {
-                    out << "(#";
+                    cout << "(#";
                 } else {
-                    handleRef(out, refs, ref);
+                    handleRef(refs, ref);
                     link.first.push_back(c);
-                    handleParen(in, link);
+                    TRY_OR_RETURN(handleParen(in, link));
                     lookup[ref] = link;
                 }
                 clear(ref, link);
@@ -178,7 +201,7 @@ int main() {
                 break;
             case ST_OPEN2:
                 if (']' == c) {
-                    handleRef(out, refs, ref);
+                    handleRef(refs, ref);
                     clear(ref, link);
                     cur = ST_CHAR;
                 } else {
@@ -189,7 +212,7 @@ int main() {
                 break;
             case ST_REF:
                 if (']' == c) {
-                    handleRef(out, refs, ref);
+                    handleRef(refs, ref);
                     clear(ref, link);
                     cur = ST_CHAR;
                 } else {
@@ -202,19 +225,17 @@ int main() {
     in.close();
 
     if (ST_CHAR != cur) {
-        cerr << "Fatal error: ended up on non default state: " << cur << endl;
+        cerr << "Error: finished reading file, but ended up on non-default state" << endl;
         return 1;
     }
 
     for (int i = 0; i < refs.size(); ++i) {
         pair<string, string> link = lookup[refs[i]];
-        out << '[' << i + 1 << "]: " << link.first;
+        cout << '[' << i + 1 << "]: " << link.first;
         if (!link.second.empty()) {
-            out << " \"" << link.second << '"' << endl;
+            cout << " \"" << link.second << '"' << endl;
         } else {
-            out << endl;
+            cout << endl;
         }
     }
-
-    out.close();
 }
