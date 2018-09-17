@@ -137,12 +137,17 @@ int main(int argc, char *argv[]) {
     enum State cur = ST_CHAR;
     vector<string> refs;
     unordered_map< string, pair<string, string> > lookup;
-    ifstream in(argv[1]);
     char c;
     int err;
-
     string ref;
     pair<string, string> link;
+
+    ifstream in(argv[1]);
+    if (!in.good()) {
+        cerr << "Error: can't read file " << argv[1] << endl;
+        return 1;
+    }
+
     while (EOF != (c = in.get())) {
         switch (cur) {
             case ST_CHAR:
