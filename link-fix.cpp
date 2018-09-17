@@ -2,6 +2,8 @@
 #include <fstream>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
+#include <ctype.h>
 
 using namespace std;
 
@@ -11,25 +13,28 @@ enum State {
     ST_CLOSE1,
     ST_OPEN2,
     ST_REF,
-    ST_LINK
+    ST_LINK,
+    ST_PAREN
 };
-
 
 int main() {
     enum State cur = ST_CHAR;
     vector<string> refs;
     unordered_map<string, string> lookup;
-    ifstream file("test.md");
+    ifstream in("test.md");
+    ofstream out("test-out.md");
     char c;
 
     string ref;
     string link;
-    while (file.get(c)) {
+    while (in.get(c)) {
         switch (cur) {
             case ST_CHAR:
                 if ('[' == c) {
                     cur = ST_OPEN1;
                     ref.clear();
+                } else {
+                    out.put(c);
                 }
                 break;
             case ST_OPEN1:
@@ -42,17 +47,46 @@ int main() {
             case ST_CLOSE1:
                 if ('[' == c) {
                     cur = ST_OPEN2;
+                    out << '[' << ref << ']';
+                } else if ('(' == c) {
+                    cur = ST_PAREN;
+                    out << '[' << ref << ']';
                 } else if (':' == c) {
                     cur = ST_LINK;
                     link.clear();
                 } else {
                     cur = ST_CHAR;
+                    out << '[' << ref << ']';
+                }
+                break;
+            case ST_PAREN:
+                if (')' == c || isspace(c)) {
+                    cur = ST_CHAR;
+                    vector<string>::iterator it = find(refs.begin(), refs.end(), ref);
+                    if (refs.end() == it) {
+                        refs.push_back(ref);
+                        out << '[' << refs.size() << ']';
+                    } else {
+                        out << '[' << distance(refs.begin(), it) + 1 << ']';
+                    }
+                    lookup[ref] = link;
+                } else if ('#' == c) {
+                    cur = ST_CHAR;
+                    out << "(#";
+                } else {
+                    link.push_back(c);
                 }
                 break;
             case ST_OPEN2:
                 if (']' == c) {
                     cur = ST_CHAR;
-                    refs.push_back(ref);
+                    vector<string>::iterator it = find(refs.begin(), refs.end(), ref);
+                    if (refs.end() == it) {
+                        refs.push_back(ref);
+                        out << '[' << refs.size() << ']';
+                    } else {
+                        out << '[' << distance(refs.begin(), it) + 1 << ']';
+                    }
                 } else {
                     cur = ST_REF;
                     ref.clear();
@@ -62,7 +96,15 @@ int main() {
             case ST_REF:
                 if (']' == c) {
                     cur = ST_CHAR;
-                    refs.push_back(ref);
+                    vector<string>::iterator it = find(refs.begin(), refs.end(), ref);
+                    if (refs.end() == it) {
+                        refs.push_back(ref);
+                        out << '[' << refs.size() << ']';
+                    } else {
+                        out << '[' << distance(refs.begin(), it) + 1 << ']';
+                    }
+                } else {
+                    ref.push_back(c);
                 }
                 break;
             case ST_LINK:
@@ -76,20 +118,16 @@ int main() {
         }
     }
 
-    file.close();
+    in.close();
 
     if (ST_CHAR != cur) {
         cerr << "Fatal error: ended up on non default state: " << cur << endl;
         return 1;
     }
 
-    cout << "List of refs (" << refs.size() << "):" << endl;
-    for (vector<string>::iterator it = refs.begin(); it != refs.end(); ++it) {
-        cout << "\t[" << *it << ']' << endl;
+    for (int i = 0; i < refs.size(); ++i) {
+        out << '[' << i + 1 << "]: " << lookup[refs[i]] << endl;
     }
 
-    cout << endl << "Lookup table (" << lookup.size() << "):" << endl;
-    for (unordered_map<string, string>::iterator it = lookup.begin(); it != lookup.end(); ++it) {
-        cout << "\t[" << it->first << "]: " << it->second << endl;
-    }
+    out.close();
 }
