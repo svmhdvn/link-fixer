@@ -30,10 +30,11 @@ For descriptions of terminology used in APM, take a look at the [official docume
 
 For details about contributing, check out the [development guide][development docs].
 
-[api docs]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md
-[gem docs]: http://gems.datadoghq.com/trace/docs/
-[visualization docs]: https://docs.datadoghq.com/tracing/visualization/
-[development docs]: https://github.com/DataDog/dd-trace-rb/blob/master/README.md#development
+[api docs]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md "title over here"
+[gem docs]: http://gems.datadoghq.com/trace/docs/ 'another one'
+[visualization docs]: https://docs.datadoghq.com/tracing/visualization/         (some spaces)
+[development docs]: https://github.com/DataDog/dd-trace-rb/blob/master/README.md#development     
+           'more spaces'
 
 ### Setup the Datadog Agent
 
@@ -77,7 +78,7 @@ The Ruby APM tracer sends trace data through the Datadog Agent.
     ```
 
 3. Add or activate instrumentation by doing either of the following:
-    1. Activate integration instrumentation (see [Integration instrumentation](#integration-instrumentation))
+    1. Activate integration instrumentation (see [Integration instrumentation](#integration-instrumentation "this is a title"))
     2. Add manual instrumentation around your code (see [Manual instrumentation](#manual-instrumentation))
 
 ### Final steps for installation
