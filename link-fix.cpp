@@ -1,3 +1,8 @@
+// TODO: case insensitive references (all lowercase)
+// TODO: markdown has a rule that 2 trailing spaces = <br> tag
+// TODO: implement this as a pre commit hook in git (probably the best way to do it)
+// TODO: cleanup and change programming language to python (probably)
+
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
@@ -22,6 +27,7 @@ enum State {
     ST_OPEN2,
     ST_REF,
     ST_PAREN,
+    ST_CODEBLOCK
 };
 
 // NOTE: moves file marker
@@ -48,28 +54,20 @@ int handleTitle(ifstream &in, char closing, string &title) {
 }
 
 // NOTE: moves file marker
+// Should be past all spaces after colon
 int handleLinkDef(ifstream &in, pair<string, string> &link) {
-    char c;
+    char c = in.get();
     int err = 0;
-    // ignore leading spaces before HREF
-    do {
-        c = in.get();
-    } while (isblank(c));
-
-    if ('\n' == c) {
-        cerr << "Error: empty reference link definition" << endl;
-        return 1;
-    }
 
     // record HREF
-    while (!isspace(c)) {
+    while (!isspace(c) && EOF != c) {
         link.first.push_back(c);
         c = in.get();
     }
 
     // skip over all spaces and newlines after HREF until next input (making sure to skip)
     char p;
-    while (isspace(p = in.peek())) {
+    while (EOF != (p = in.peek()) && isspace(p)) {
         c = in.get();
     }
 
@@ -153,8 +151,17 @@ int main(int argc, char *argv[]) {
             case ST_CHAR:
                 if ('[' == c) {
                     cur = ST_OPEN1;
+                } else if ('`' == c) {
+                    cout.put(c);
+                    cur = ST_CODEBLOCK;
                 } else {
                     cout.put(c);
+                }
+                break;
+            case ST_CODEBLOCK:
+                cout.put(c);
+                if ('`' == c) {
+                    cur = ST_CHAR;
                 }
                 break;
             case ST_OPEN1:
@@ -172,9 +179,21 @@ int main(int argc, char *argv[]) {
                     cout << '[' << ref << ']';
                     cur = ST_PAREN;
                 } else if (':' == c) {
-                    TRY_OR_RETURN(handleLinkDef(in, link));
-                    lookup[ref] = link;
-                    clear(ref, link);
+                    // ignore leading spaces before HREF
+                    while (isblank(in.peek())) {
+                        c = in.get();
+                    }
+
+                    // This could either be an empty link reference or a harmless case.
+                    // Either way, we ignore if we end the line on the colon.
+                    if ('\n' == in.peek()) {
+                        cout << '[' << ref << "]:";
+                        clear(ref, link);
+                    } else {
+                        TRY_OR_RETURN(handleLinkDef(in, link));
+                        lookup[ref] = link;
+                        clear(ref, link);
+                    }
                     cur = ST_CHAR;
                 } else if (isblank(c)) {
                     cur = ST_CLOSE1SPACE;
@@ -230,7 +249,7 @@ int main(int argc, char *argv[]) {
     in.close();
 
     if (ST_CHAR != cur) {
-        cerr << "Error: finished reading file, but ended up on non-default state" << endl;
+        cerr << "Error: finished reading file, but ended up on non-default state: " << cur << endl;
         return 1;
     }
 
