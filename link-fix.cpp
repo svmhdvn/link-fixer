@@ -9,6 +9,7 @@
 #include <vector>
 #include <algorithm>
 #include <ctype.h>
+#include <stack>
 
 #define TRY_OR_RETURN(cmd) do { \
     err = cmd;                  \
@@ -28,6 +29,24 @@ enum State {
     ST_REF,
     ST_PAREN,
     ST_CODEBLOCK
+};
+
+struct shortcode {
+    char open_delim;
+    char close_delim;
+    bool is_closing;
+    string name;
+    string args;
+};
+
+struct linkdef {
+    string link;
+    string title;
+};
+
+struct context {
+    vector<string> refs;
+    unordered_map<string, struct linkdef> lookup;
 };
 
 // NOTE: moves file marker
@@ -55,13 +74,13 @@ int handleTitle(ifstream &in, char closing, string &title) {
 
 // NOTE: moves file marker
 // Should be past all spaces after colon
-int handleLinkDef(ifstream &in, pair<string, string> &link) {
+int handleLinkDef(ifstream &in, struct linkdef &ld) {
     char c = in.get();
     int err = 0;
 
     // record HREF
     while (!isspace(c) && EOF != c) {
-        link.first.push_back(c);
+        ld.link.push_back(c);
         c = in.get();
     }
 
@@ -74,10 +93,10 @@ int handleLinkDef(ifstream &in, pair<string, string> &link) {
     // handle title if there exists one
     if ('"' == p || '\'' == p) {
         c = in.get();
-        TRY_OR_RETURN(handleTitle(in, p, link.second));
+        TRY_OR_RETURN(handleTitle(in, p, ld.title));
     } else if ('(' == p) {
         c = in.get();
-        TRY_OR_RETURN(handleTitle(in, ')', link.second));
+        TRY_OR_RETURN(handleTitle(in, ')', ld.title));
     }
 
     // skip over ending spaces too so that we don't add extra newlines
@@ -85,11 +104,11 @@ int handleLinkDef(ifstream &in, pair<string, string> &link) {
     return 0;
 }
 
-int handleParen(ifstream &in, pair<string, string> &link) {
+int handleParen(ifstream &in, struct linkdef &ld) {
     char c;
     int err = 0;
     while ((EOF != (c = in.get())) && !isblank(c) && (')' != c)) {
-        link.first.push_back(c);
+        ld.link.push_back(c);
     }
 
     if (in.eof()) {
@@ -103,7 +122,7 @@ int handleParen(ifstream &in, pair<string, string> &link) {
             return 1;
         }
 
-        TRY_OR_RETURN(handleTitle(in, '"', link.second));
+        TRY_OR_RETURN(handleTitle(in, '"', ld.title));
 
         if (')' != in.get()) {
             cerr << "Error: missing closing parenthesis in inline link definition" << endl;
@@ -112,6 +131,52 @@ int handleParen(ifstream &in, pair<string, string> &link) {
     }
 
     return err;
+}
+
+// right after the first opening brace
+// TODO output intermediate to cout if we DON'T match
+int tryMatchShortcode(ifstream &in, struct shortcode *psc) {
+    if ('{' != in.get()) {
+        return 0;
+    }
+    char open_delim = in.get();
+    if ('<' != open_delim && '%' != open_delim) {
+        return 0;
+    }
+    char close_delim = ('<' == open_delim) ? '>' : '%';
+
+    char c;
+    while ((EOF != (c = in.get())) && isblank(c));
+
+    string name;
+    bool is_closing = false;
+    if ('/' == c) {
+        is_closing = true;
+        c = in.get();
+    }
+
+    do {
+        name.push_back(c);
+    } while ((EOF != (c = in.get())) && !isblank(c));
+
+    string args = " ";
+    while ((EOF != (c = in.get())) && close_delim != c) {
+        args.push_back(c);
+    }
+
+    char c1 = in.get();
+    char c2 = in.get();
+    if ('}' != c1 && '}' != c2) {
+        cerr << "Error: unfinished shortcode" << endl;
+        return 1;
+    }
+
+    psc->open_delim = open_delim;
+    psc->close_delim = close_delim;
+    psc->is_closing = is_closing;
+    psc->name = name;
+    psc->args = args;
+    return 0;
 }
 
 // expects to be right after the opening paren
@@ -125,20 +190,33 @@ void handleRef(vector<string> &refs, string &ref) {
     }
 }
 
-void clear(string &ref, pair<string, string> &link) {
+void clear(string &ref, struct linkdef &ld) {
     ref.clear();
-    link.first.clear();
-    link.second.clear();
+    ld.link.clear();
+    ld.title.clear();
+}
+
+void outputLinkdefs(stack<struct context> &context_stack) {
+    struct context ctx = context_stack.top();
+    context_stack.pop();
+    for (int i = 0; i < ctx.refs.size(); ++i) {
+        struct linkdef ld = ctx.lookup[ctx.refs[i]];
+        cout << '[' << i + 1 << "]: " << ld.link;
+        if (!ld.title.empty()) {
+            cout << " \"" << ld.title << '"' << endl;
+        } else {
+            cout << endl;
+        }
+    }
 }
 
 int main(int argc, char *argv[]) {
+    stack<struct context> context_stack;
+    struct linkdef ld;
     enum State cur = ST_CHAR;
-    vector<string> refs;
-    unordered_map< string, pair<string, string> > lookup;
+    string ref;
     char c;
     int err;
-    string ref;
-    pair<string, string> link;
 
     ifstream in(argv[1]);
     if (!in.good()) {
@@ -146,10 +224,25 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // start off with the top level context
+    context_stack.emplace();
     while (EOF != (c = in.get())) {
         switch (cur) {
             case ST_CHAR:
-                if ('[' == c) {
+                if ('{' == c) {
+                    struct shortcode sc = {0};
+                    TRY_OR_RETURN(tryMatchShortcode(in, &sc));
+                    if (sc.open_delim) {
+                        if (sc.is_closing) {
+                            outputLinkdefs(context_stack);
+                        } else {
+                            context_stack.emplace();
+                        }
+                        cout << "{{" << sc.open_delim << ' ';
+                        cout << (sc.is_closing ? "/" : "") << sc.name;
+                        cout << sc.args << sc.close_delim << "}}";
+                    }
+                } else if ('[' == c) {
                     cur = ST_OPEN1;
                 } else if ('`' == c) {
                     cout.put(c);
@@ -188,18 +281,18 @@ int main(int argc, char *argv[]) {
                     // Either way, we ignore if we end the line on the colon.
                     if ('\n' == in.peek()) {
                         cout << '[' << ref << "]:";
-                        clear(ref, link);
+                        clear(ref, ld);
                     } else {
-                        TRY_OR_RETURN(handleLinkDef(in, link));
-                        lookup[ref] = link;
-                        clear(ref, link);
+                        TRY_OR_RETURN(handleLinkDef(in, ld));
+                        context_stack.top().lookup[ref] = ld;
+                        clear(ref, ld);
                     }
                     cur = ST_CHAR;
                 } else if (isblank(c)) {
                     cur = ST_CLOSE1SPACE;
                 } else {
                     cout << '[' << ref << ']';
-                    clear(ref, link);
+                    clear(ref, ld);
                     cur = ST_CHAR;
                 }
                 break;
@@ -215,29 +308,29 @@ int main(int argc, char *argv[]) {
                 if ('#' == c) {
                     cout << "(#";
                 } else {
-                    handleRef(refs, ref);
-                    link.first.push_back(c);
-                    TRY_OR_RETURN(handleParen(in, link));
-                    lookup[ref] = link;
+                    handleRef(context_stack.top().refs, ref);
+                    ld.link.push_back(c);
+                    TRY_OR_RETURN(handleParen(in, ld));
+                    context_stack.top().lookup[ref] = ld;
                 }
-                clear(ref, link);
+                clear(ref, ld);
                 cur = ST_CHAR;
                 break;
             case ST_OPEN2:
                 if (']' == c) {
-                    handleRef(refs, ref);
-                    clear(ref, link);
+                    handleRef(context_stack.top().refs, ref);
+                    clear(ref, ld);
                     cur = ST_CHAR;
                 } else {
-                    clear(ref, link);
+                    clear(ref, ld);
                     ref.push_back(c);
                     cur = ST_REF;
                 }
                 break;
             case ST_REF:
                 if (']' == c) {
-                    handleRef(refs, ref);
-                    clear(ref, link);
+                    handleRef(context_stack.top().refs, ref);
+                    clear(ref, ld);
                     cur = ST_CHAR;
                 } else {
                     ref.push_back(c);
@@ -248,18 +341,10 @@ int main(int argc, char *argv[]) {
 
     in.close();
 
-    if (ST_CHAR != cur) {
+    if (ST_CHAR != cur || context_stack.size() > 1) {
         cerr << "Error: finished reading file, but ended up on non-default state: " << cur << endl;
         return 1;
     }
 
-    for (int i = 0; i < refs.size(); ++i) {
-        pair<string, string> link = lookup[refs[i]];
-        cout << '[' << i + 1 << "]: " << link.first;
-        if (!link.second.empty()) {
-            cout << " \"" << link.second << '"' << endl;
-        } else {
-            cout << endl;
-        }
-    }
+    outputLinkdefs(context_stack);
 }
