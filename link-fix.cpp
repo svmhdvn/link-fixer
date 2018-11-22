@@ -1,7 +1,6 @@
 // TODO: case insensitive references (all lowercase)
 // TODO: markdown has a rule that 2 trailing spaces = <br> tag
 // TODO: implement this as a pre commit hook in git (probably the best way to do it)
-// TODO: cleanup and change programming language to python (probably)
 
 #include <iostream>
 #include <fstream>
@@ -9,7 +8,6 @@
 #include <vector>
 #include <algorithm>
 #include <ctype.h>
-#include <stack>
 
 #define TRY_OR_RETURN(cmd) do { \
     err = cmd;                  \
@@ -196,10 +194,8 @@ void clear(string &ref, struct linkdef &ld) {
     ld.title.clear();
 }
 
-void outputLinkdefs(stack<struct context> &context_stack) {
-    struct context ctx = context_stack.top();
-    context_stack.pop();
-    for (int i = 0; i < ctx.refs.size(); ++i) {
+void outputLinkdefs(struct context &ctx) {
+    for (unsigned i = 0; i < ctx.refs.size(); ++i) {
         struct linkdef ld = ctx.lookup[ctx.refs[i]];
         cout << '[' << i + 1 << "]: " << ld.link;
         if (!ld.title.empty()) {
@@ -211,7 +207,7 @@ void outputLinkdefs(stack<struct context> &context_stack) {
 }
 
 int main(int argc, char *argv[]) {
-    stack<struct context> context_stack;
+    vector<struct context> context_stack;
     struct linkdef ld;
     enum State cur = ST_CHAR;
     string ref;
@@ -225,7 +221,7 @@ int main(int argc, char *argv[]) {
     }
 
     // start off with the top level context
-    context_stack.emplace();
+    context_stack.emplace_back();
     while (EOF != (c = in.get())) {
         switch (cur) {
             case ST_CHAR:
@@ -234,9 +230,11 @@ int main(int argc, char *argv[]) {
                     TRY_OR_RETURN(tryMatchShortcode(in, &sc));
                     if (sc.open_delim) {
                         if (sc.is_closing) {
-                            outputLinkdefs(context_stack);
+                            struct context ctx = context_stack.back();
+                            context_stack.pop_back();
+                            outputLinkdefs(ctx);
                         } else {
-                            context_stack.emplace();
+                            context_stack.emplace_back();
                         }
                         cout << "{{" << sc.open_delim << ' ';
                         cout << (sc.is_closing ? "/" : "") << sc.name;
@@ -284,7 +282,7 @@ int main(int argc, char *argv[]) {
                         clear(ref, ld);
                     } else {
                         TRY_OR_RETURN(handleLinkDef(in, ld));
-                        context_stack.top().lookup[ref] = ld;
+                        context_stack.back().lookup[ref] = ld;
                         clear(ref, ld);
                     }
                     cur = ST_CHAR;
@@ -308,17 +306,17 @@ int main(int argc, char *argv[]) {
                 if ('#' == c) {
                     cout << "(#";
                 } else {
-                    handleRef(context_stack.top().refs, ref);
+                    handleRef(context_stack.back().refs, ref);
                     ld.link.push_back(c);
                     TRY_OR_RETURN(handleParen(in, ld));
-                    context_stack.top().lookup[ref] = ld;
+                    context_stack.back().lookup[ref] = ld;
                 }
                 clear(ref, ld);
                 cur = ST_CHAR;
                 break;
             case ST_OPEN2:
                 if (']' == c) {
-                    handleRef(context_stack.top().refs, ref);
+                    handleRef(context_stack.back().refs, ref);
                     clear(ref, ld);
                     cur = ST_CHAR;
                 } else {
@@ -329,7 +327,7 @@ int main(int argc, char *argv[]) {
                 break;
             case ST_REF:
                 if (']' == c) {
-                    handleRef(context_stack.top().refs, ref);
+                    handleRef(context_stack.back().refs, ref);
                     clear(ref, ld);
                     cur = ST_CHAR;
                 } else {
@@ -341,10 +339,19 @@ int main(int argc, char *argv[]) {
 
     in.close();
 
-    if (ST_CHAR != cur || context_stack.size() > 1) {
+    if (ST_CHAR != cur) {
         cerr << "Error: finished reading file, but ended up on non-default state: " << cur << endl;
         return 1;
     }
 
-    outputLinkdefs(context_stack);
+    // merge all remaining trailing contexts into the global context
+    struct context global;
+    for (vector<struct context>::iterator it = context_stack.begin();
+            it != context_stack.end();
+            ++it) {
+        struct context ctx = *it;
+        global.refs.insert(global.refs.end(), ctx.refs.begin(), ctx.refs.end());
+        global.lookup.merge(ctx.lookup);
+    }
+    outputLinkdefs(global);
 }
