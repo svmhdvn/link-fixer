@@ -1,264 +1,195 @@
 ---
-title: Tracing Ruby Applications
-kind: Documentation
+title: From the query to the graph 
+kind: documentation
 aliases:
-- /tracing/ruby/
-- /tracing/languages/ruby/
-further_reading:
-- link: "https://github.com/DataDog/dd-trace-rb"
-  tag: "Github"
-  text: Source code
-- link: "https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md"
-  tag: "Documentation"
-  text: API documentation
-- link: "http://gems.datadoghq.com/trace/docs/"
-  tag: "Rubydoc"
-  text: Gem documentation
-- link: "tracing/visualization/"
-  tag: "Use the APM UI"
-  text: "Explore your services, resources and traces"
-- link: "tracing/advanced_usage/"
-  tag: "Advanced Usage"
-  text: "Advanced Usage"
+  - /examples/
+  - /examples/aws-metrics/
+  - /examples/month_before/
+  - /examples/graphing-functions/
+  - /examples/day_before/
+  - /examples/json-editing/
+  - /examples/nginx-metrics/
+  - /examples/dashboards/
+  - /examples/hour_before/
+  - /examples/os-metrics/
+  - /examples/week_before/
+  - /examples/cassandra-metrics/
+  - /graphing/miscellaneous/functions
+  - /graphing/miscellaneous/
+  - /getting_started/from_the_query_to_the_graph
+  - /graphing/miscellaneous/from_the_query_to_the_graph
 ---
 
-## Installation and Getting Started
+While setting up graphs is pretty simple in Datadog, this page aims at helping you leverage even more value from the Datadog graphing system.
 
-For configuration instructions, and details about using the API, check out Datadog's [API documentation][api docs] and [gem documentation][gem docs].
+This article focuses on describing the steps performed by Datadog's graphing system from the query to the graph, so that you get a good idea how to choose your graph settings.
 
-For descriptions of terminology used in APM, take a look at the [official documentation][visualization docs].
+Tl;Dr ? [there is a short version of this article][1].
 
-For details about contributing, check out the [development guide][development docs].
+Use the metric **system.disk.total** as an example. Say that you want to graph data associated to this metric and coming from a specific server (`host:moby`).
 
-[api docs]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md "title over here"
-[gem docs]: http://gems.datadoghq.com/trace/docs/ 'another one'
-[visualization docs]: https://docs.datadoghq.com/tracing/visualization/         (some spaces)
-[development docs]: https://github.com/DataDog/dd-trace-rb/blob/master/README.md#development     
-           'more spaces'
+When setting up a new graph in a [Timeboard][2]/[Screenboard][3], you can use the editor—but you can also switch to the JSON tab to set up advanced queries:
 
-### Setup the Datadog Agent
+{{< img src="graphing/miscellaneous/from_query_to_graph/graph_metric.png" alt="graph_metric" responsive="true" style="width:75%;">}}
 
-The Ruby APM tracer sends trace data through the Datadog Agent.
+Now, follow each step executed by the Datadog backend to perform the query and render a graph line on your dashboard.
 
-[Install and configure the Datadog Agent][1], see additional documentation for [tracing Docker applications][2].
+At each step, this article notes the effect of each parameter of the query.
+**Before the query, storage: data is stored separately depending on the tags**
 
-### Quickstart for Rails applications
+The metric `system.disk.total` (collected by default by the [datadog-agent](/agent)) is seen from different sources.  
 
-1. Add the `ddtrace` gem to your Gemfile:
-    
-    ```ruby
-    source 'https://rubygems.org'
-    gem 'ddtrace'
-    ```
+This is because this metric is reported by different hosts, and also because each datadog-agent collects this metric per device. It adds to the metric `system.disk.total` the tag `device:tmpfs` when sending data associated to the disk with the same name, etc.
 
-2. Install the gem with `bundle install`
-3. Create a `config/initializers/datadog.rb` file containing:
+Thus, this metric is seen with different `{host, device}` tag combinations.
 
-    ```ruby
-    Datadog.configure do |c|
-      # This will activate auto-instrumentation for Rails
-      c.use :rails
-    end
-    ```
+For each source (defined by a host and a set of tags), data is stored separately.
+In this example, consider `host:moby` as having 5 devices. Thus, Datadog is storing 5 timeseries (all datapoints submitted over time for a source) for:
 
-    You can also activate additional integrations here (see [Integration instrumentation](#integration-instrumentation))
+* `{host:moby, device:tmpfs}`
+* `{host:moby, device:cgroup_root}`
+* `{host:moby, device:/dev/vda1}`
+* `{host:moby, device:overlay}`
+* `{host:moby, device:shm}`
 
-### Quickstart for other Ruby applications
+Now, consider the successive steps followed by the backend for the query presented above.
 
-1. Install the gem with `gem install ddtrace`
-2. Add a configuration block to your Ruby application:
+## Find which timeseries are needed for the query
 
-    ```ruby
-    require 'ddtrace'
-    Datadog.configure do |c|
-      # Configure the tracer here.
-      # Activate integrations, change tracer settings, etc...
-      # By default without additional configuration, nothing will be traced.
-    end
-    ```
+In this query, you only asked for data associated to `host:moby`. So the first step for Datadog's backend is to scan all sources (in this case all `{host, device}` combinations with which metric `system.disk.total` is submitted) and only retain those corresponding to the scope of the query.
 
-3. Add or activate instrumentation by doing either of the following:
-    1. Activate integration instrumentation (see [Integration instrumentation](#integration-instrumentation "this is a title"))
-    2. Add manual instrumentation around your code (see [Manual instrumentation](#manual-instrumentation))
+As you may have guessed, the backend finds five matching sources (see previous paragraph).
 
-### Final steps for installation
+{{< img src="graphing/miscellaneous/from_query_to_graph/metrics_graph_2.png" alt="metrics_graph_2" responsive="true" style="width:70%;">}}
 
-After setting up, your services will appear on the [APM services page][3] within a few minutes. Learn more about [using the APM UI][4].
+The idea is then to aggregate data from these sources together to give you a metric representing the `system.disk.total` for your host. This is done at [step 3][4].
 
-## Compatibility
+**Note**: The tagging system adopted by Datadog is simple and powerful. You don't have to know or specify the sources to combine—you just have to give a tag, i.e. an ID, and Datadog combines all data with this ID and not the rest. For instance, you don't need to know the number of hosts or devices you have when you query `system.disk.total{*}`. Datadog aggregates data from all sources for you.
 
-### Integrations
+[More information about timeseries and tag cardinality][5]
 
-#### Interpreter Compatibility
+**Parameter involved: scope**  
+You can use more than one tag, e.g. `{host:moby, device:udev}` if you want to fetch data responding to both tags.
 
-Ruby APM includes support for the following Ruby interpreters:
+## Proceed to time-aggregation
 
+Our backend selects all data corresponding to the time period of your graph.
 
-| Type                               | Version | Support type    |
-| ---------------------------------- | -----   | --------------- |
-| [MRI](https://www.ruby-lang.org/)  | 1.9.1   | Experimental    |
-|                                    | 1.9.3   | Fully Supported |
-|                                    | 2.0     | Fully Supported |
-|                                    | 2.1     | Fully Supported |
-|                                    | 2.2     | Fully Supported |
-|                                    | 2.3     | Fully Supported |
-|                                    | 2.4     | Fully Supported |
-|                                    | 2.5     | Fully Supported |
-| [JRuby](http://jruby.org/)         | 9.1.5   | Experimental    |
+However, before combining all data from the different sources (step 3), Datadog needs to proceed to time aggregation.
 
-#### Web Server Compatibility
+### Why?
 
-Ruby APM includes support for the following web servers:
+As Datadog stores data at a 1 second granularity, it cannot display all real data on graphs. [See this article to learn more on how data is aggregated in graphs][6]
 
-| Type                                           | Version      | Support type    |
-| ---------------------------------------------- | ------------ | --------------- |
-| [Puma](http://puma.io/)                        | 2.16+ / 3.6+ | Fully Supported |
-| [Unicorn](https://bogomips.org/unicorn/)       | 4.8+ / 5.1+  | Fully Supported |
-| [Passenger](https://www.phusionpassenger.com/) | 5.0+         | Fully Supported |
+For a graph on a 1-week time window, it would require sending hundreds of thousands of values to your browser—and besides, not all these points could be graphed on a widget occupying a small portion of your screen. For these reasons, Datadog is forced to proceed to data aggregation and to send a limited number of points to your browser to render a graph.
 
-#### Library Compatibility
+### Which granularity?
 
-Ruby APM includes support for the following libraries and frameworks:
+For instance, on a one-day view with the 'lines' display, you'll have one datapoint every 5 minutes. The Datadog backend slices the 1-day interval into 288 buckets of 5 minutes. For each bucket, the backend rolls up all data into a single value. For instance, the datapoint rendered on your graph with timestamp 07:00 is actually an aggregate of all real datapoints submitted between 07:00:00 and 07:05:00 that day.
 
-| Name                 | Versions Supported     | Support type    | How to configure |
-| -------------------- | ---------------------- | --------------- | ---------------- |
-| [Active Record][11]  | `>= 3.2, < 5.2`        | Fully Supported | *[Link][10]*     |
-| [AWS][13]            | `>= 2.0`               | Fully Supported | *[Link][12]*     |
-| [Dalli][15]          | `>= 2.7`               | Fully Supported | *[Link][14]*     |
-| [DelayedJob][53]     | `>= 4.1`               | Fully Supported | *[Link][52]*     |
-| [Elastic Search][17] | `>= 6.0`               | Fully Supported | *[Link][16]*     |
-| [Excon][19]          | `>= 0.62`              | Fully Supported | *[Link][18]*     |
-| [Faraday][21]        | `>= 0.14`              | Fully Supported | *[Link][20]*     |
-| [gRPC][23]           | `>= 1.10`              | Fully Supported | *[Link][22]*     |
-| [Grape][25]          | `>= 1.0`               | Fully Supported | *[Link][24]*     |
-| [GraphQL][27]        | `>= 1.7.9`             | Fully Supported | *[Link][26]*     |
-| [MongoDB][29]        | `>= 2.0, < 2.5`        | Fully Supported | *[Link][28]*     |
-| [MySQL2][55]         | `>= 0.5`               | Fully Supported | *[Link][54]*     |
-| [Net/HTTP][31]       | *(Any Supported Ruby)* | Fully Supported | *[Link][30]*     |
-| [Racecar][33]        | `>= 0.3.5`             | Fully Supported | *[Link][32]*     |
-| [Rack][35]           | `>= 1.4.7`             | Fully Supported | *[Link][34]*     |
-| [Rails][37]          | `>= 3.2, < 5.2`        | Fully Supported | *[Link][36]*     |
-| [Rake][39]           | `>= 12.0`              | Fully Supported | *[Link][38]*     |
-| [Redis][41]          | `>= 3.2, < 4.0`        | Fully Supported | *[Link][40]*     |
-| [Resque][43]         | `>= 1.0, < 2.0`        | Fully Supported | *[Link][42]*     |
-| [RestClient][57]     | `>= 1.8`               | Fully Supported | *[Link][56]*     |
-| [Sequel][45]         | `>= 3.41`              | Fully Supported | *[Link][44]*     |
-| [Sidekiq][47]        | `>= 4.0`               | Fully Supported | *[Link][46]*     |
-| [Sinatra][49]        | `>= 1.4.5`             | Fully Supported | *[Link][48]*     |
-| [Sucker Punch][51]   | `>= 2.0`               | Fully Supported | *[Link][50]*     |
+### How?
 
-*Fully Supported* support indicates all tracer features are available.
+By default, the Datadog backend computes the rollup aggregate by averaging all real values, which tends to smooth out graphs as you zoom out. [See more information about why does zooming out a timeframe also smooth out your graphs][7].
+Data aggregation needs to occur whether you have 1 or 1000 sources as long as you look at a large time window. What you generally see on graph is not the real values submitted but local aggregates.
 
-*Experimental* indicates most features should be available, but unverified.
+{{< img src="graphing/miscellaneous/from_query_to_graph/metrics_graph_3.png" alt="metrics_graph_3" responsive="true" style="width:75%;">}}
 
-[10]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#active-record
-[11]: https://github.com/rails/rails/tree/master/activerecord
-[12]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#aws
-[13]: https://github.com/aws/aws-sdk-ruby
-[14]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#dalli
-[15]: https://github.com/petergoldstein/dalli
-[16]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#elastic-search
-[17]: https://github.com/elastic/elasticsearch-ruby
-[18]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#excon
-[19]: https://github.com/excon/excon
-[20]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#faraday
-[21]: https://github.com/lostisland/faraday
-[22]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#grpc
-[23]: https://github.com/grpc/grpc/tree/master/src/ruby
-[24]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#grape
-[25]: https://github.com/ruby-grape/grape
-[26]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#graphql
-[27]: https://github.com/rmosolgo/graphql-ruby
-[28]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#mongodb
-[29]: https://github.com/mongodb/mongo-ruby-driver
-[30]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#nethttp
-[31]: https://ruby-doc.org/stdlib-2.4.0/libdoc/net/http/rdoc/Net/HTTP.html
-[32]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#racecar
-[33]: https://github.com/zendesk/racecar
-[34]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#rack
-[35]: https://github.com/rack/rack
-[36]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#rails
-[37]: https://github.com/rails/rails
-[38]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#rake
-[39]: https://github.com/ruby/rake
-[40]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#redis
-[41]: https://github.com/redis/redis-rb
-[42]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#resque
-[43]: https://github.com/resque/resque
-[44]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#sequel
-[45]: https://github.com/jeremyevans/sequel
-[46]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#sidekiq
-[47]: https://github.com/mperham/sidekiq
-[48]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#sinatra
-[49]: https://github.com/sinatra/sinatra
-[50]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#sucker-punch
-[51]: https://github.com/brandonhilkert/sucker_punch
-[52]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#delayedjob
-[53]: https://github.com/collectiveidea/delayed_job
-[54]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#mysql2
-[55]: https://github.com/brianmario/mysql2
-[56]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#restclient
-[57]: https://github.com/rest-client/rest-client
+Our backend computes a series of local aggregates for each source corresponding to the query.
 
-## Configuration
+However, you can control how this aggregation is performed.
 
-To activate more advanced features, change tracer behavior, or trace additional code, you must add additional configuration.
+**Parameter involved: rollup (optional)**
+How to use the ['rollup' function][8]?
 
-### Integration instrumentation
+In this example, `rollup(avg,60)` defines an aggregate period of 60 seconds. So the X minutes interval is sliced into Y intervals of 1 minute each. Data within a given minute is aggregated into a single point that shows up on your graph (after step 3, the space aggregation).
 
-APM provides out-of-the-box support for many popular integrations. Although none are active by default, you can easily activate them in `Datadog.configure`.
+Note that the Datadog backend tries to keep the number of intervals to a number below ~300. So if you do `rollup(60)` over a 2-month time window, you won't get the one-minute granularity requested.
 
-**Example**
+## Proceed to space-aggregation
 
-```ruby
-require 'ddtrace'
-require 'sinatra'
-require 'active_record'
+Now you can mix data from different source into a single line.
 
-Datadog.configure do |c|
-  c.use :sinatra
-  c.use :active_record
-end
+You have ~300 points for each source. Each of them represents a minute.
+In this example, for each minute, Datadog computes the sum across all sources, resulting in the following graph:
 
-# Now write your code naturally, it's traced automatically.
-get '/home' do
-  @posts = Posts.order(created_at: :desc).limit(10)
-  erb :index
-end
-```
+{{< img src="graphing/miscellaneous/from_query_to_graph/metrics_graph_4.png" alt="metrics_graph_4" responsive="true" style="width:75%;">}}
 
-For list of available integrations, see [Library compatibility](#library-compatibility).
+The value obtained (25.74GB) is the sum of the values reported by all sources (see previous image).
 
-### Tracer settings
+Note: Of course, if there is only one source (for instance, if we had chosen the scope `{host:moby, device:/dev/disk}` for the query), using `sum`/`avg`/`max`/`min` has no effect as no space aggregation needs to be performed. [See here for more information][9].
 
-**Enabling/disabling**
+**Parameter involved: space aggregator**
 
-Tracing is enabled by default. To disable it (i.e. in a test environment):
+Datadog offers 4 space aggregators: 
 
-```ruby
-Datadog.configure do |c|
-  c.tracer enabled: false
-end
-```
+* `max`
+* `min`
+* `avg`
+* `sum` 
 
-For more tracer settings, check out the [API documentation][6].
+## Apply functions (optional)
 
-### Processing pipeline
+Most of the functions are applied at the last step. From the ~300 points obtained after time (step 2) and space (step 3) aggregations, the function computes new values which can be seen on your graph.
 
-The processing pipeline allows you to modify traces before they are sent to the Agent. This can be useful for customizing trace content or removing unwanted traces.
+In this example the function `abs` makes sure that your results are positive numbers.
 
-It provides **filtering** for removing spans that match certain criteria, and **processing** for modifying spans.
+**Parameter involved: function**
 
-For more details about how to activate and configure the processing pipeline, check out the [API documentation][9].
+{{< whatsnext desc="Choose your type of functions" >}}
+    {{< nextlink href="/graphing/functions/algorithms" >}}Algorithmic: Implement Anomaly or Outlier detection on your metric.{{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/arithmetic" >}}Arithmetic: Perform Arithmetic operation on your metric.  {{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/count" >}}Count: Count non-zero or non-null values of your metric. {{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/interpolation" >}}Interpolation: Fill or set default values for your metric.{{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/rank" >}}Rank: Select only a subset of metrics. {{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/rate" >}}Rate: Calculate custom derivative over your metric.{{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/regression" >}}Regression: Apply a machine learning function to your metric.{{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/rollup" >}}Rollup: Control the number of raw points used in your metric. {{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/smoothing" >}}Smoothing: Smooth your metric variations.{{< /nextlink >}}
+    {{< nextlink href="/graphing/functions/timeshift" >}}Timeshift: Shift your metric data point along the timeline. {{< /nextlink >}}
+{{< /whatsnext >}}
 
-## Further reading
+### Grouped queries, arithmetic, as_count/rate
+ 
+#### Grouped queries 
 
-{{< partial name="whats-next/whats-next.html" >}}
+{{< img src="graphing/miscellaneous/from_query_to_graph/metric_graph_6.png" alt="metric_graph_6" responsive="true" style="width:75%;">}}
 
-[1]: /tracing/setup
-[2]: /tracing/setup/docker/
-[3]: https://app.datadoghq.com/apm/services
-[4]: https://docs.datadoghq.com/tracing/visualization/
-[6]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#tracer-settings
-[7]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#priority-sampling
-[9]: https://github.com/DataDog/dd-trace-rb/blob/master/docs/GettingStarted.md#processing-pipeline
+The logic is the same:
+
+1. The Datadog backend finds all different devices associated to the source selected.
+2. For each device, the backend performs the query `system.disk.total{host:example, device:<device>}` as explained in this article.
+3. All final results are graphed on the same graph.
+
+{{< img src="graphing/miscellaneous/from_query_to_graph/metric_graph_7.png" alt="metric_graph_2" responsive="true" style="width:75%;">}}
+
+**Note**: `rollup` or `as_count` modifiers have to be placed after the by {`device`} mention.
+
+**Note2**: You can use multiple tags, for instance: `system.disk.in_use{*} by {host,device}`.
+
+#### Arithmetic
+
+Arithmetic is applied after time and space aggregation as well—([step 4: Apply function](#apply-functions-optional)).
+
+{{< img src="graphing/miscellaneous/from_query_to_graph/metric_graph_8.png" alt="metric_graph_8" responsive="true" style="width:75%;">}}
+
+#### as_count and as_rate
+
+`As_count` and `as_rate` are time aggregators specific to rates and counters submitted via StatsD/DogStatsD. They make it possible to view metrics as a rate per second, or to see them as raw counts.
+Syntax: instead of adding a rollup, you can use `.as_count()` or `.as_rate()`.
+
+More information in [this blog post][11].
+Documentation about [StatsD/DogStatsD][12].
+
+[1]: /graphing/faq/how-does-datadog-render-graphs-my-graph-doesn-t-show-the-values-i-m-expecting
+[2]: /graphing/dashboards/timeboard
+[3]: /graphing/dashboards/screenboard
+[4]: #proceed-to-space-aggregation
+[5]: /developers/metrics/custom_metrics
+[6]: /graphing/faq/how-is-data-aggregated-in-graphs
+[7]: /graphing/faq/why-does-zooming-out-a-timeframe-also-smooth-out-my-graphs
+[8]: /graphing/functions/rollup
+[9]: /graphing/faq/i-m-switching-between-the-sum-min-max-avg-aggregators-but-the-values-look-the-same
+[10]: /graphing/miscellaneous/
+[11]: https://www.datadoghq.com/blog/visualize-statsd-metrics-counts-graphing/
+[12]: /developers/dogstatsd
+
