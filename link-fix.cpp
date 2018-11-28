@@ -1,7 +1,8 @@
 // TODO case insensitive references (all lowercase)
 // TODO markdown has a rule that 2 trailing spaces = <br> tag
+// TODO generate a list of all closable shortcodes inside datadog/documentation/layouts/shortcodes/*.html
+// TODO pass in list of closable shortcodes to look for
 // TODO implement this as a pre commit hook in git (probably the best way to do it)
-// TODO refactor state machine to be a function so that we can recursively call it
 
 #include <iostream>
 #include <fstream>
