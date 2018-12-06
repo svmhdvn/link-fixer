@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include <sstream>
 #include <ctype.h>
 
 #define TRY_OR_ERR(cmd) do { \
@@ -50,21 +51,26 @@ struct context {
     unordered_map<string, struct linkdef> lookup;
 };
 
-const int num_shortcodes = 5;
-const string shortcodes[] = {"nextlink", "tab", "table", "tabs", "whatsnext"};
-
 vector<struct context> context_stack;
 struct linkdef ld;
 enum State cur = ST_CHAR;
 string ref;
 
-bool closable_shortcode(const string name) {
-    for (int i = 0; i < num_shortcodes; ++i) {
-        if (shortcodes[i] == name) {
-            return true;
-        }
+vector<string> shortcodes;
+
+void get_shortcodes(const string list) {
+    shortcodes.clear();
+    stringstream ss(list);
+
+    while(ss.good()) {
+        string substr;
+        getline(ss, substr, ',');
+        shortcodes.push_back(substr);
     }
-    return false;
+}
+
+bool closable_shortcode(const string name) {
+    return find(shortcodes.begin(), shortcodes.end(), name) != shortcodes.end();
 }
 
 // NOTE: moves file marker
@@ -232,7 +238,6 @@ int state_machine(char c, ifstream &in) {
     switch (cur) {
         case ST_CHAR:
             if ('{' == c) {
-                cout.put(c);
                 cur = ST_BRACE;
             } else if ('[' == c) {
                 cur = ST_OPEN1;
@@ -246,13 +251,14 @@ int state_machine(char c, ifstream &in) {
         case ST_BRACE: {
             cur = ST_CHAR;
             if ('{' != c) {
+                cout.put('{');
                 return state_machine(c, in);
             }
-            cout.put(c);
 
             struct shortcode sc = {0};
             TRY_OR_ERR(tryMatchShortcode(in, &sc));
             if (!sc.open_delim) {
+                cout << "{{";
                 break;
             }
 
@@ -260,20 +266,14 @@ int state_machine(char c, ifstream &in) {
             if (sc.is_closing) {
                 struct context ctx = context_stack.back();
                 context_stack.pop_back();
+                cout << endl;
                 outputLinkdefs(ctx);
             } else if (closable_shortcode(sc.name)) {
                 context_stack.emplace_back();
             }
 
-            // // TEST
-            // if (sc.is_closing) {
-            //     cerr << "CLOSE: " << sc.name << endl;
-            // } else {
-            //     cerr << "OPEN: " << sc.name << endl;
-            // }
-
-            // output the rest of the shortcode
-            cout << sc.open_delim << ' ';
+            // output the shortcode tag
+            cout << "{{" << sc.open_delim << ' ';
             cout << (sc.is_closing ? "/" : "") << sc.name;
             cout << sc.args << sc.close_delim << "}}";
             break;
@@ -332,8 +332,8 @@ int state_machine(char c, ifstream &in) {
             cout << '[' << ref << ']';
             break;
         case ST_PAREN:
-            if ('#' == c) {
-                cout << "(#";
+            if ('#' == c || '?' == c) {
+                cout << '(' << c;
             } else {
                 handleRef(context_stack.back().refs, ref);
                 ld.link.push_back(c);
@@ -375,6 +375,10 @@ int main(int argc, char *argv[]) {
     if (!in.good()) {
         cerr << "Error: can't read file " << argv[1] << endl;
         return 1;
+    }
+
+    if (argc > 2) {
+        get_shortcodes(argv[2]);
     }
 
     // start off with the top level context
