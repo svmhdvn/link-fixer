@@ -37,7 +37,7 @@ void get_shortcodes(const string list) {
 
     while(ss.good()) {
         string substr;
-        getline(ss, substr, ',');
+        getline(ss, substr);
         shortcodes.push_back(substr);
     }
 }
@@ -101,9 +101,9 @@ int try_shortcode(istream &in) {
         return 1;
     }
 
-    string tmp;
-    in >> tmp;
-    if ("}}" != tmp) {
+    char tmp;
+    in >> c >> tmp;
+    if ('}' != c && '}' != tmp) {
         cerr << "Error: unfinished shortcode, no closing }} found" << endl;
         return 1;
     }
@@ -113,7 +113,8 @@ int try_shortcode(istream &in) {
         context_stack.pop_back();
         output_link_defs(ctx);
     } else if (closable_shortcode(name)) {
-        context_stack.emplace_back();
+        struct context ctx = {};
+        context_stack.push_back(ctx);
     }
 
     // output the shortcode tag
@@ -267,7 +268,8 @@ int main(int argc, char *argv[]) {
     }
 
     // start off with the top level context
-    context_stack.emplace_back();
+    struct context top_ctx = {};
+    context_stack.push_back(top_ctx);
 
     string line;
     istringstream iss;
@@ -299,7 +301,7 @@ int main(int argc, char *argv[]) {
             ++it) {
         struct context ctx = *it;
         global.refs.insert(global.refs.end(), ctx.refs.begin(), ctx.refs.end());
-        global.lookup.merge(ctx.lookup);
+        global.lookup.insert(ctx.lookup.begin(), ctx.lookup.end());
     }
 
     // output the global list of linkdefs
