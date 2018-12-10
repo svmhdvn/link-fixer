@@ -33,11 +33,11 @@ enum State cur = ST_DEFAULT;
 
 void get_shortcodes(const string list) {
     shortcodes.clear();
-    stringstream ss(list);
+    istringstream iss(list);
 
-    while(ss.good()) {
-        string substr;
-        getline(ss, substr);
+    string substr;
+    while(iss.good()) {
+        iss >> substr;
         shortcodes.push_back(substr);
     }
 }
@@ -295,13 +295,12 @@ int main(int argc, char *argv[]) {
     }
 
     // merge all remaining trailing contexts into the global context
-    struct context global;
+    struct context global = {};
     for (vector<struct context>::iterator it = context_stack.begin();
             it != context_stack.end();
             ++it) {
-        struct context ctx = *it;
-        global.refs.insert(global.refs.end(), ctx.refs.begin(), ctx.refs.end());
-        global.lookup.insert(ctx.lookup.begin(), ctx.lookup.end());
+        global.refs.insert(global.refs.end(), it->refs.begin(), it->refs.end());
+        global.lookup.insert(it->lookup.begin(), it->lookup.end());
     }
 
     // output the global list of linkdefs
