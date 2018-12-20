@@ -1,5 +1,3 @@
-// TODO fix code block parsing (any number of backticks > 3, 4-space indent, etc)
-
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -20,7 +18,9 @@ enum State {
     ST_DEFAULT,
     ST_NONLINKDEF,
     ST_LINKDEF,
-    ST_CODEBLOCK
+    ST_CODEBLOCKSTART,
+    ST_CODEBLOCK,
+    ST_CODEBLOCKEND
 };
 
 struct context {
@@ -30,7 +30,13 @@ struct context {
 
 vector<string> shortcodes;
 vector<struct context> context_stack;
-enum State cur = ST_DEFAULT;
+static enum State cur = ST_DEFAULT;
+
+// number of code block delimiter characters encountered
+// this is used to check for arbitrary number of backticks (`)
+// block_start can also process leading spaces for use in codeblocks
+int block_start = 0;
+int block_end = 0;
 
 int next(istream &in, char c);
 
@@ -176,7 +182,7 @@ int try_ref(istream &in, string link_text) {
         ref.push_back(c);
     }
 
-    // TODO warning here
+    // TODO warning
     if (EOF == c) {
         cout << '[' << ref;
         return 0;
@@ -254,29 +260,51 @@ int try_ref_or_def(istream &in) {
 }
 
 int next(istream &in, char c) {
-    int err = 0;
     switch (cur) {
+        case ST_CODEBLOCKSTART:
+            cout.put(c);
+            if ('`' == c) {
+                ++block_start;
+            } else {
+                cur = ST_CODEBLOCK;
+            }
+            break;
         case ST_CODEBLOCK:
             cout.put(c);
             if ('`' == c) {
-                cur = ST_NONLINKDEF;
+                ++block_end;
+                cur = ST_CODEBLOCKEND;
             }
             break;
+        case ST_CODEBLOCKEND:
+            cout.put(c);
+            if (('`' == c) && (block_start == ++block_end)) {
+                cur = ST_NONLINKDEF;
+            } else {
+                block_end = 0;
+                cur = ST_CODEBLOCK;
+            }
+            break;
+        case ST_DEFAULT:
+            // if we find a codeblock, ignore the rest of the line
+            if ('\t' == c || ((' ' == c) && (4 == ++block_start))) {
+                in.setstate(std::ios_base::eofbit);
+                break;
+            }
+
+            block_start = 0;
+            block_end = 0;
+            cur = ST_NONLINKDEF;
+            // FALLTHROUGH
         default:
             if ('[' == c) {
                 return try_ref_or_def(in);
-            }
-
-            // link defs can be indented
-            if (!isspace(c)) {
-                cur = ST_NONLINKDEF;
-            }
-
-            if ('{' == c) {
-                TRY_OR_ERR(try_shortcode(in));
+            } else if ('{' == c) {
+                return try_shortcode(in);
             } else if ('`' == c) {
                 cout.put(c);
-                cur = ST_CODEBLOCK;
+                ++block_start;
+                cur = ST_CODEBLOCKSTART;
             } else {
                 cout.put(c);
             }
@@ -304,7 +332,7 @@ int main(int argc, char *argv[]) {
 
     string line;
     istringstream iss;
-    while(getline(infile, line)) {
+    while (getline(infile, line)) {
         iss.str(line);
         iss.clear();
         char c;
@@ -318,8 +346,12 @@ int main(int argc, char *argv[]) {
         }
 
         // don't reset state while in a codeblock
-        if (ST_CODEBLOCK != cur) {
+        if (ST_CODEBLOCKSTART == cur) {
+            cur = ST_CODEBLOCK;
+        } else if ((ST_CODEBLOCKEND == cur && block_start == block_end) || ST_CODEBLOCK != cur) {
             cur = ST_DEFAULT;
+            block_start = 0;
+            block_end = 0;
         }
     }
 
